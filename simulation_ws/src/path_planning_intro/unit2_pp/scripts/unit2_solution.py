@@ -1,7 +1,7 @@
 #! /usr/bin/env python
 
 """
-Dijkstra's algorithm path planning exercise solution
+DStarLite's algorithm path planning exercise solution
 Author: Roberto Zegers R.
 Copyright: Copyright (c) 2020, Roberto Zegers R.
 License: BSD-3-Clause
@@ -10,174 +10,380 @@ Usage: roslaunch unit2_pp unit2_solution.launch
 """
 
 import rospy
+import heapq
+import math
 
-def find_neighbors(index, width, height, costmap, orthogonal_step_cost):
-  """
-  Identifies neighbor nodes inspecting the 8 adjacent neighbors
-  Checks if neighbor is inside the map boundaries and if is not an obstacle according to a threshold
-  Returns a list with valid neighbour nodes as [index, step_cost] pairs
-  """
-  neighbors = []
-  # length of diagonal = length of one side by the square root of 2 (1.41421)
-  diagonal_step_cost = orthogonal_step_cost * 1.41421
-  # threshold value used to reject neighbor nodes as they are considered as obstacles [1-254]
-  lethal_cost = 1
+class Vertex:
+    '''
+        Defines a vertex by its grid position (x,y) and stores its key 
+        K - Key has two values [k1,k2]
+    '''
+    def __init__(self, x, y, k1, k2):
+        self.x  = int(x)
+        self.y  = int(y)
+        self.k1 = k1
+        self.k2 = k2
+        self.k  = [k1,k2]
+        self.info = [k1,k2,[x,y]]
 
-  upper = index - width
-  if upper > 0:
-    if costmap[upper] < lethal_cost:
-      step_cost = orthogonal_step_cost + costmap[upper]/255
-      neighbors.append([upper, step_cost])
+km = 0
 
-  left = index - 1
-  if left % width > 0:
-    if costmap[left] < lethal_cost:
-      step_cost = orthogonal_step_cost + costmap[left]/255
-      neighbors.append([left, step_cost])
+#define width 50
+#define height 50
 
-  upper_left = index - width - 1
-  if upper_left > 0 and upper_left % width > 0:
-    if costmap[upper_left] < lethal_cost:
-      step_cost = diagonal_step_cost + costmap[upper_left]/255
-      neighbors.append([index - width - 1, step_cost])
+width  = 74
+height = 74 #will be overwitten
 
-  upper_right = index - width + 1
-  if upper_right > 0 and (upper_right) % width != (width - 1):
-    if costmap[upper_right] < lethal_cost:
-      step_cost = diagonal_step_cost + costmap[upper_right]/255
-      neighbors.append([upper_right, step_cost])
+rhs  = []
+GRID = []
+g    = []
 
-  right = index + 1
-  if right % width != (width + 1):
-    if costmap[right] < lethal_cost:
-      step_cost = orthogonal_step_cost + costmap[right]/255
-      neighbors.append([right, step_cost])
+priorityQueue = [] #create empty list
 
-  lower_left = index + width - 1
-  if lower_left < height * width and lower_left % width != 0:
-    if costmap[lower_left] < lethal_cost:
-      step_cost = diagonal_step_cost + costmap[lower_left]/255
-      neighbors.append([lower_left, step_cost])
+s_start = Vertex(0,0,0,0)
+s_goal = Vertex(0,0,0,0)
 
-  lower = index + width
-  if lower <= height * width:
-    if costmap[lower] < lethal_cost:
-      step_cost = orthogonal_step_cost + costmap[lower]/255
-      neighbors.append([lower, step_cost])
+def isVertexEqual(v1,v2):
+    if(v1.x == v2.x and v1.y == v2.y):
+        return 1
+    return 0
 
-  lower_right = index + width + 1
-  if (lower_right) <= height * width and lower_right % width != (width - 1):
-    if costmap[lower_right] < lethal_cost:
-      step_cost = diagonal_step_cost + costmap[lower_right]/255
-      neighbors.append([lower_right, step_cost])
+def h(s1,s2):
+    #heuristic function
+    return math.sqrt((s1.x-s2.x)**2 + (s1.y-s2.y)**2)
 
-  return neighbors
+def CalculateKey(s):
+    k1 = min(g[s.x][s.y],rhs[s.x][s.y]) + h(s_start,s) + km
+    k2 = min(g[s.x][s.y],rhs[s.x][s.y])
+
+    #s.k1 = k1
+    #s.k2 = k2
+    updatedVertex = Vertex(s.x,s.y,k1,k2)
+    return updatedVertex
+
+def initialize():
+    global priorityQueue
+    global s_goal
+
+    priorityQueue = []
+    heapq.heapify(priorityQueue) #heapify
+
+    global km 
+    km = 0
+
+    for i in range(0,width):
+        for j in range(0,height):
+            rhs[i][j] = float('inf')
+            g[i][j]   = float('inf')
+    
+    rhs[s_goal.x][s_goal.y] = 0
+    s_goal = CalculateKey(s_goal)
+    heapq.heappush(priorityQueue,s_goal.info)
+
+def cg_cost(a, b):
+    global GRID
+
+    if(b.x < 0 or b.x > width - 1 or b.y < 0 or b.y > height - 1): #checks if intended place is outof bounds
+        return float('inf')
 
 
-def dijkstra(start_index, goal_index, width, height, costmap, resolution, origin, grid_viz):
-  ''' 
-  Performs Dijkstra's shortes path algorithm search on a costmap with a given start and goal node
-  '''
+    blocked = GRID[a.x][a.y] + GRID[b.x][b.y]
 
-  # create an open_list
-  open_list = []
+    if(blocked > 0):
+        return float('inf')
+    else:
+        cost =  math.sqrt( (a.x - b.x)**2 + (a.y - b.y)**2) + g[b.x][b.y]
 
-  # set to hold already processed nodes
-  closed_list = set()
+        if(cost >= float('inf')):
+            return float('inf')
+        else:
+            return cost
 
-  # dict for mapping children to parent
-  parents = dict()
+def removeIfExist(u):
+    '''
+        Checks if vertex u exists in Priority Queue, and removes it
+    '''
+    global priorityQueue
+    for item in priorityQueue:
+        if([u.x,u.y] == item[2]):
+            priorityQueue.remove(item)
+            priorityQueue.sort()
+            return True
+    
+    return False
 
-  # dict for mapping g costs (travel costs) to nodes
-  g_costs = dict()
+def UpdateVertex(u):
+    global priorityQueue
+    global s_goal
+    global width
+    global height
+    #check if out of bounds
+    if(u.x < 0 or u.x >= width or u.y < 0 or u.y >= height):
+        return
+    if(not(isVertexEqual(u,s_goal))):
+        c1 = float('inf')
+        c2 = float('inf')
+        c3 = float('inf')
+        c4 = float('inf')
+        c5 = float('inf')
+        c6 = float('inf')
+        c7 = float('inf')
+        c8 = float('inf')
 
-  # set the start's node g_cost
-  g_costs[start_index] = 0
+        if(u.y+1 > height):c1 = float('inf')
+        else: c1 = cg_cost(u,Vertex(u.x,u.y+1,0,0))
 
-  # add start node to open list
-  open_list.append([start_index, 0])
+        if(u.x+1 > width):c2 = float('inf')
+        else: c2 = cg_cost(u,Vertex(u.x+1,u.y,0,0))
 
-  shortest_path = []
+        if(u.y-1 < 0):c3 = float('inf')
+        else: c3 = cg_cost(u,Vertex(u.x,u.y-1,0,0))
 
-  path_found = False
-  rospy.loginfo('Dijkstra: Done with initialization')
+        if(u.x-1 < 0):c4 = float('inf')
+        else: c4 = cg_cost(u,Vertex(u.x-1,u.y,0,0))
 
-  # Main loop, executes as long as there are still nodes inside open_list
-  while open_list:
+        if(u.x-1 < 0 or u.y - 1 < 0):c5 = float('inf')
+        else: c5 = cg_cost(u,Vertex(u.x-1,u.y-1,0,0))
 
-    # sort open_list according to the lowest 'g_cost' value (second element of each sublist)
-    open_list.sort(key = lambda x: x[1]) 
-    # extract the first element (the one with the lowest 'g_cost' value)
-    current_node = open_list.pop(0)[0]
+        if(u.x-1 < 0 or u.y + 1 > height): c6 = float('inf')
+        else: c6 = cg_cost(u,Vertex(u.x-1,u.y+1,0,0))
 
-    # Close current_node to prevent from visting it again
-    closed_list.add(current_node)
+        if(u.x + 1 > width or u.y - 1 < 0): c7 = float('inf')
+        else: c7 = cg_cost(u,Vertex(u.x+1,u.y-1,0,0))
 
-    # Optional: visualize closed nodes
-    grid_viz.set_color(current_node,"pale yellow")
+        if(u.x + 1 > width or u.y + 1 > height): c8 = float('inf')
+        else: c8 = cg_cost(u,Vertex(u.x+1,u.y+1,0,0))
 
-    # If current_node is the goal, exit the main loop
-    if current_node == goal_index:
-      path_found = True
-      break
+        rhs[u.x][u.y] = min(min(min(c3,c4),min(c1,c2)),min(min(c7,c8),min(c5,c6)))
+    
+    removeIfExist(u) #if U in PriorityQueue, remove it
+    
+    if(rhs[u.x][u.y]!=g[u.x][u.y]):
+        u = CalculateKey(u)
+        heapq.heappush(priorityQueue,u.info)
 
-    # Get neighbors of current_node
-    neighbors = find_neighbors(current_node, width, height, costmap, resolution)
+def isCostLower(b, a):  
+    if(b.k1 < a.k1):
+        return 1
+    elif(a.k1 == b.k1):
+        if(b.k2 < a.k2):
+            return 1
+        else:
+            return 0;
+    else:
+        return 0;
 
-    # Loop neighbors
-    for neighbor_index, step_cost in neighbors:
+def TopKey():
+    '''
+        Returns top vertex as the vertex class type
+    '''
+    global priorityQueue
+    if(len(priorityQueue)==0):
+        return Vertex(0,0,float('inf'),float('inf'));
+    top_i = priorityQueue[0]
 
-      # Check if the neighbor has already been visited
-      if neighbor_index in closed_list:
-        continue
+    top_vertex = Vertex(top_i[2][0],top_i[2][1],top_i[0],top_i[1])
+    return top_vertex
 
-      # calculate g_cost of neighbour considering it is reached through current_node
-      g_cost = g_costs[current_node] + step_cost
+def ComputeShortestPath():
+    global priorityQueue
+    global s_start
 
-      # Check if the neighbor is in open_list
-      in_open_list = False
-      for idx, element in enumerate(open_list):
-        if element[0] == neighbor_index:
-          in_open_list = True
-          break
 
-      # CASE 1: neighbor already in open_list
-      if in_open_list:
-        if g_cost < g_costs[neighbor_index]:
-          # Update the node's g_cost inside g_costs
-          g_costs[neighbor_index] = g_cost
-          parents[neighbor_index] = current_node
-          # Update the node's g_cost inside open_list
-          open_list[idx] = [neighbor_index, g_cost]
+    while(isCostLower(TopKey(),CalculateKey(s_start)) or 
+            rhs[s_start.x][s_start.y] != g[s_start.x][s_start.y]):
 
-      # CASE 2: neighbor not in open_list
-      else:
-        # Set the node's g_cost inside g_costs
-        g_costs[neighbor_index] = g_cost
-        parents[neighbor_index] = current_node
-        # Add neighbor to open_list
-        open_list.append([neighbor_index, g_cost])
+        k_old = TopKey()
 
-        # Optional: visualize frontier
-        grid_viz.set_color(neighbor_index,'orange')
+        cell_index = getIndex(k_old.x,k_old.y)
+        rospy.loginfo('size = '+ str(len(priorityQueue))+ " at - " + str(k_old.x)+','+str(k_old.y))
 
-  rospy.loginfo('Dijkstra: Done traversing nodes in open_list')
+        heapq.heappop(priorityQueue)
+        u     = k_old;
 
-  if not path_found:
-    rospy.logwarn('Dijkstra: No path found!')
-    return shortest_path
+        #rospy.loginfo('rhs,g ' + str(rhs[s_start.x][s_start.y])+','+str(g[s_start.x][s_start.y]))
 
-  # Reconstruct path by working backwards from target
-  if path_found:
-      node = goal_index
-      shortest_path.append(goal_index)
-      while node != start_index:
-          shortest_path.append(node)
-          # get next node
-          node = parents[node]
-  # reverse list
-  shortest_path = shortest_path[::-1]
-  rospy.loginfo('Dijkstra: Done reconstructing path')
+        if(k_old.k1 == float('inf') ): #break if path doesn't exist
+            return;
 
-  return shortest_path
+        if(isCostLower(k_old,CalculateKey(u))):
+            u = CalculateKey(u);
+            heapq.heappush(priorityQueue,u.info)
 
+        elif(g[u.x][u.y] > rhs[u.x][u.y]):
+            g[u.x][u.y] = rhs[u.x][u.y];
+
+            UpdateVertex(Vertex(u.x   ,u.y+1,0,0));
+            UpdateVertex(Vertex(u.x+1 ,u.y  ,0,0));
+            UpdateVertex(Vertex(u.x   ,u.y-1,0,0));
+            UpdateVertex(Vertex(u.x-1 ,u.y  ,0,0));
+
+            UpdateVertex(Vertex(u.x -1  ,u.y-1,0,0));
+            UpdateVertex(Vertex(u.x -1  ,u.y+1,0,0));
+            UpdateVertex(Vertex(u.x +1  ,u.y-1,0,0));
+            UpdateVertex(Vertex(u.x +1  ,u.y+1,0,0));
+        else:
+            g[u.x][u.y] = float('inf');
+
+            UpdateVertex(Vertex(u.x   ,u.y  ,0,0));
+
+            UpdateVertex(Vertex(u.x   ,u.y+1,0,0));
+            UpdateVertex(Vertex(u.x+1 ,u.y  ,0,0));
+            UpdateVertex(Vertex(u.x   ,u.y-1,0,0));
+            UpdateVertex(Vertex(u.x-1 ,u.y  ,0,0));
+
+            UpdateVertex(Vertex(u.x -1  ,u.y-1,0,0));
+            UpdateVertex(Vertex(u.x -1  ,u.y+1,0,0));
+            UpdateVertex(Vertex(u.x +1  ,u.y-1,0,0));
+            UpdateVertex(Vertex(u.x +1  ,u.y+1,0,0));
+'''
+0000
+0000
+0000
+00X0
+
+(3,2)
+
+11
+
+(11%4, 11/4)
+'''
+
+
+def getIndex(i,j):
+    return j*width + i;
+
+def convertToCellIndex(x,y,resolution):
+    cellIndex = 0
+    newX = x/resolution
+    newY = y/resolution
+
+    cellIndex = getIndex(newY,newX)
+    return int(cellIndex)
+
+def getRow(index):
+    return int(index % width)
+    
+def getCol(index):
+    return index//width
+
+def outofbounds(v):
+    if(v.x < 0 or v.x >= height or v.y < 0 or v.y >=width ):
+        return 1
+    else:
+        return 0
+
+def onestep():
+    
+    '''
+       Selecting the next lowest cost node and assigns it to s_start
+    '''
+
+    moves = [[-1,0],[0,-1],[1,0],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]]
+
+    global s_start
+    global s_goal
+
+    rospy.loginfo("currently -> "+str(s_start.x) + "," + str(s_start.y) + ' => going to '+str(s_goal.x) + "," + str(s_goal.y))
+
+
+
+    if(s_start.x == s_goal.x and s_start.y == s_goal.y):
+        return 0
+
+    arr = []
+
+    for i in range(0,len(moves)):
+        arr.append(cg_cost(s_start, Vertex(s_start.x + moves[i][0] ,s_start.y + moves[i][1],0,0)))
+ 
+    min_index = arr.index(min(arr))
+
+    s_start.x = s_start.x + moves[min_index][0]
+    s_start.y = s_start.y + moves[min_index][1]
+
+    if(not(outofbounds(s_start))):       
+        return 1
+    else:
+        rospy.loginfo("went out of bounds")
+        return 0
+
+
+def d_star_lite(start_index, goal_index, width_, height_, costmap, resolution, origin, grid_viz):
+    ''' 
+    Performs DStarLite's shortes path algorithm search on a costmap with a given start and goal node
+    '''
+    global s_start
+    global s_goal
+    global width
+    global height
+    global rhs
+    global GRID
+    global g
+
+    width = width_
+    height = height_
+    
+    rhs  = [[0 for x in range(width)] for y in range(height)] 
+    GRID = [[0 for x in range(width)] for y in range(height)] 
+    g    = [[0 for x in range(width)] for y in range(height)] 
+
+
+    rospy.loginfo('DStarLite: Starting... ')
+    rospy.loginfo('width ' + str(width))
+    rospy.loginfo('height ' + str(height))
+
+
+    s_start = Vertex(getRow(start_index),getCol(start_index),0,0)
+    s_goal  = Vertex(getRow(goal_index),getCol(goal_index),0,0)
+
+    rospy.loginfo("start = " + str(s_start.x) +','+ str(s_start.y))
+    rospy.loginfo("goal  = " + str(s_goal.x)  +','+ str(s_goal.y))
+
+    initialize()
+
+    #rospy.loginfo(costmap)
+
+    x = 0
+    for row in range(0,height):
+        for col in range(0,width):
+            if(costmap[x] > 1):
+                GRID[col][row] = 1
+            else:
+                GRID[col][row] = 0
+            x+=1
+
+    for i in range(0,height):
+        for j in range(0,width):
+            if(i == s_goal.x and j == s_goal.y):
+                print("X",end="")
+            elif(i == s_start.x and j == s_start.y):
+                print("S",end="")
+            else:
+                print(GRID[i][j],end="")
+        print()
+
+    '''
+    output = []
+    for i in range(0,width):
+        output.append([])
+        for j in range(0,height):
+            output[i].append(str(GRID[i][j]))
+
+    for row in output:
+        rospy.loginfo(row)
+    '''
+
+    rospy.loginfo('DStarLite: Done with initialization')
+
+    ComputeShortestPath()
+
+    bestPath = []
+
+    #if(g[s_start.x][s_start.y]!=float('inf')):
+    rospy.loginfo("DStarLite: Going to construct Path")
+    while(onestep()):
+        bestPath.append(getIndex(s_start.x,s_start.y))
+
+    rospy.loginfo('DStarLite: Done reconstructing path')
+
+    return bestPath
